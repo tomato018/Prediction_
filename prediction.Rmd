@@ -1,0 +1,199 @@
+---
+title: "HUDK4051: Prediction - Comparing Trees"
+author: "Meijuan Zeng"
+date: "2/21/2018"
+output: html_document
+---
+
+In this assignment you will modelling student data using three flavors of tree algorithm: CART, C4.5 and C5.0. We will be using these algorithms to attempt to predict which students drop out of courses. Many universities have a problem with students over-enrolling in courses at the beginning of semester and then dropping most of them as the make decisions about which classes to attend. This makes it difficult to plan for the semester and allocate resources. However, schools don't want to restrict the choice of their students. One solution is to create predictions of which students are likley to drop out of which courses and use these predictions to inform semester planning. 
+
+In this assignment we will be using the tree algorithms to build models of which students are likely to drop out of which classes. 
+
+## Software
+
+In order to generate our models we will need several packages. The first package you should install is [caret](https://cran.r-project.org/web/packages/caret/index.html).
+
+There are many prediction packages available and they all have slightly different syntax. caret is a package that brings all the different algorithms under one hood using the same syntax. 
+
+We will also be accessing an algorithm from the [Weka suite](https://www.cs.waikato.ac.nz/~ml/weka/). Weka is a collection of machine learning algorithms that have been implemented in Java and made freely available by the University of Waikato in New Zealand. To access these algorithms you will need to first install both the [Java Runtime Environment (JRE) and Java Development Kit](http://www.oracle.com/technetwork/java/javase/downloads/jre9-downloads-3848532.html) on your machine. You can then then install the [RWeka](https://cran.r-project.org/web/packages/RWeka/index.html) package within R.
+
+(Issue 1: failure to install RWeka/RWekajars, paste "sudo R CMD javareconf" into terminal and try to install again)
+
+The last package you will need is [C50](https://cran.r-project.org/web/packages/C50/index.html).
+
+## Data
+
+The data comes from a university registrar's office. The code book for the variables are available in the file code-book.txt. Examine the variables and their definitions.
+
+Upload the drop-out.csv data into R as a data frame. 
+
+```{r}
+library(dplyr)
+drop_out <- read.csv('drop-out.csv', header = TRUE)
+```
+
+The next step is to separate your data set into a training set and a test set. Randomly select 25% of the students to be the test data set and leave the remaining 75% for your training data set. (Hint: each row represents an answer, not a single student.)
+
+```{r}
+library(caret)
+trainData <- createDataPartition(y = drop_out$student_id, p =0.75, list = FALSE)
+training <- drop_out[trainData,]
+testing <- drop_out[-trainData,]
+
+```
+
+For this assignment you will be predicting the student level variable "complete". 
+(Hint: make sure you understand the increments of each of your chosen variables, this will impact your tree construction)
+
+Visualize the relationships between your chosen variables as a scatterplot matrix.  Save your image as a .pdf named scatterplot_matrix.pdf. Based on this visualization do you see any patterns of interest? Why or why not?
+
+```{r}
+testing1 <- subset(testing[2:9])
+testing1 <- testing1[-c(5:6)]
+testing1$complete <- ifelse(testing1$complete == 'yes', 1, 0)
+testing1$international<- ifelse(testing1$international == 'yes', 1,0)
+testing1$online <- ifelse(testing1$online == 'yes', 1,0)
+library(gclus)
+testing1.r <- cor(testing1) # get correlations
+testing1.col <- dmat.color(testing1.r) # get colors
+# reorder variables so those with highest correlation
+# are closest to the diagonal
+testing1.o <- order.single(testing1.r) 
+cpairs(testing1, testing1.o, panel.colors=testing1.col, gap=.5,
+main="Variables Ordered and Colored by Correlation" )
+
+#From my correlation plot, I only see the relatively high negative correlation between the year and completion. Probabaly if students spent fewer years enrolled in the program, they may have higher possibilities to complete the registered course. However, I cannot find patterns among other variables because the correlation value is so nearly to 0.
+
+```
+
+## CART Trees
+
+In HUDK4050 we used the [rpart package](https://cran.r-project.org/web/packages/rpart/rpart.pdf) to generate CART tree models. Review your work using this package if you cannot remember how the trees are constructed. 
+
+Construct a classification tree that predicts complete using the caret package.
+
+```{r}
+library(caret)
+
+training1 <- training[,c(2:10)] #Remove the student_id variable that we do not want to use in the model
+
+#Define the control elements we would like to use
+ctrl <- trainControl(method = "repeatedcv", #Tell caret to perform 10-fold cross validation
+                repeats = 3, #Tell caret to repeat each fold three times
+                classProbs = TRUE, #Calculate class probabilities for ROC calculation
+                summaryFunction = twoClassSummary)
+
+#Define the model
+cartFit <- train(complete ~ ., #Define which variable to predict 
+                data = training1, #Define the data set to train the model on
+                trControl = ctrl, #Tell caret the control elements
+                method = "rpart", #Define the model type
+                metric = "ROC", #Tell caret to calculate the ROC curve
+                preProc = c("center", "scale")) #Center and scale the data to minimize the error
+
+#Check the results
+cartFit
+                
+#Plot ROC against complexity 
+plot(cartFit)
+
+```
+
+Describe important model attribues of your tree. Do you believe it is a successful model of student performance, why/why not? 
+
+#Based on the model attributes, I can see that the model is successful because the final cp value used for the model is 0.01 and it is the lowest. In the plot, we can see that the ROC value is the highest and over 0.85, suggesting that there's over 85% probability of a randomly selected  student from a 'completed' group being classified as 'completed' as opposed to a randomly selected student from a 'non-completed' group being classified as 'completed'. We can see the model of student performance is successful.
+
+What does the plot represent? What information does this plot tell us?
+#The plot shows the negative correlation between cp value and ROC.The lower cp value is, the greater repeated cross-validation value will be, meaning that there is higher probability that a student randomly selected from a 'completed' group is classified as 'completed'. When the cp value is the lowest, the ROC is optimal at this peak. After that, the ROC decreases, meaning that there are less nodes in a tree and there is poorer prediction. 
+
+Now predict results from the test data and describe import attributes of this test. Do you believe it is a successful model of student performance, why/why not?
+
+```{r}
+testing2 <- testing[,c(2:10)] #Remove the student_id variable that we do not want to use in the model
+
+#Generate prediction using previously trained model
+cartClasses <- predict(cartFit, newdata = testing2)
+
+#Generate model statistics
+confusionMatrix(data = cartClasses, testing2$complete)
+
+#The accuracy is 89.06%, with the 95% CI between 87.35% and 90.62%, and p-value less than 0.01, which is significant. The sensititity (True Positive) is 62.8% and specificity (False Positive) is 99.43%, meaning that the rate of a correct classification of students who have not completed a course is 99.43%. However, the rate of a correct classification of students who have completed a course is only 62.8%, meaning that 37.2% of students who have completed the course were incorrectly classified as 'not completed'. Therefore, we can conlude that the model prediction accuracy needs improvement. 
+```
+
+## C4.5-Type Trees
+
+You will now repeat the same prediction but using a different tree-based algorithm called [J48](). J48 is a Java implementation of the C4.5 decsion tree algorithm of [Quinlan (1993)](). 
+
+How does the C4.5 algorithm differ from the CART algorithm?
+
+#C4.5 splits trees based on gain ration and uses error-based pruning method, while CART splits trees based on towing criteria and uses cost-complexity pruning. C4.5 is suspectible to outliers, but CART can handle outliers. 
+Train the J48 model on the same training data and examine your results.
+```{r}
+#Unable to make Weka work, so skip to alternative solution
+library(party)
+ctrl <- trainControl(method = "repeatedcv",
+                repeats = 3, 
+                classProbs = TRUE, 
+                summaryFunction = twoClassSummary)
+
+#Define the model
+ctreeFit <- train(complete ~ ., 
+                data = training1, 
+                trControl = ctrl, 
+                method = "ctree", 
+                metric = "ROC",
+                preProc = c("center", "scale")) 
+
+ctreeFit
+plot(ctreeFit)
+```
+Describe important model attribues of your tree. Do you believe it is a successful model of student performance, why/why not?
+
+#Based on the result, I think the model is successful. The final mincriterion value is 0.5, and we can see the repeated cross-validation value is the highest and is over 0.91 in the 2nd graph when the mincriterion is 0.5. This means that 91% probability of a randomly selected stuent from a 'completed' group is predicted as 'completed' as opposed to a randomly selected student from a 'non-completed' group being predicted as 'completed'. The ROC value in this model is higher than in CART. We can see that this model is successful.
+
+What does the plot represent? What information does this plot tell us?
+
+#The plot represents the relationship between 1-p-value threshold and repeated cross-validation. When the 1-p-value threshold is less than 0.5, the ROC value increases and the prediction is better. When the threshold is over 0.5, the ROC value decreases and prediction is poorer. 
+
+Now test your new J48 model by predicting the test data and generating model fit statistics.
+
+```{r}
+ctreeClasses <- predict(ctreeFit, newdata = testing2)
+confusionMatrix(data = ctreeClasses, testing2$complete)
+```
+
+There is an updated version of the C4.5 model called C5.0, it is implemented in the C50 package. What improvements have been made to the newer version? 
+
+#C5.0 makes improvements on speed, memory usage, smaller decision trees, support for boosting to have more accuracy, more variety of weighting, and winnowing to remove unheplful attriutes.
+
+Install the C50 package, train and then test the C5.0 model on the same data.
+
+```{r}
+library(C50)
+c50Fit <- train(complete ~ .,
+                data = training1,
+                trControl = ctrl,
+                method = "C5.0",
+                metric = "ROC",
+                preProc = c("center", "scale"))
+c50Fit
+plot(c50Fit)
+c50Classes <- predict(c50Fit, newdata = testing2)
+confusionMatrix(data = c50Classes, testing2$complete)
+
+```
+
+## Compare the models
+
+caret allows us to compare all three models at once.
+
+```{r}
+resamps <- resamples(list(cart = cartFit, ctree = ctreeFit, cfiveo = c50Fit))
+summary(resamps)
+```
+
+What does the model summary tell us? Which model do you believe is the best?
+#The model summary compares ROC, sensitivity, and sepcificity among the 3 models.From their mean value, I can see that all of them have high sepcificity, meaning that the rate of a correct classification of students who have not completed a course is high. However, when looking at their sensitivity and ROC value, c50 ranks the highest, ctree ranks the second, and the cart ranks the last. These value mean that c50 model is the best model of student performance for prediction and accuracy. 
+
+Which variables (features) within your chosen model are important, do these features provide insights that may be useful in solving the problem of students dropping out of courses?
+#When choosing the model, we need to look at the relevance and precision of the model training and testing. Most importantly, we should look at their ROC value and determine its accuracy. The variables' relevance and precision, and model accuracy indeed provide useful insights to predict students' dropping out of courses.In the scatter plot and modelling, we can see that the amount of years student enrolled ina program is the most important predictor of whether students complete the course or drop out.
